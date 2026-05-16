@@ -1,0 +1,32 @@
+# launchkit/.gitignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# RSA keys — NEVER commit
+backend/keys/private.pem
+backend/keys/public.pem
+
+# SQLite job store
+backend/jobs.db
+
+# Alembic
+backend/alembic/versions/*.pyc
+
+# Node
+node_modules/
+frontend/dist/
+
+# Misc
+.DS_Store
+*.log
