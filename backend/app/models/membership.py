@@ -48,7 +48,7 @@ class OrgMembership(Base, UUIDMixin, TimestampMixin):
     organization: Mapped["Organization"] = relationship(
         "Organization", back_populates="memberships"
     )
-    role: Mapped["Role"] = relationship("Role", back_populates="memberships")
+    role: Mapped["Role"] = relationship("Role", back_populates="memberships", lazy="joined")
 
     def __repr__(self) -> str:
         return f"<OrgMembership user={self.user_id} org={self.org_id}>"

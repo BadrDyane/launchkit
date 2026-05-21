@@ -31,7 +31,25 @@ class Base(DeclarativeBase):
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Standard DB session — tenant scope will be applied by middleware."""
     async with AsyncSessionLocal() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
+
+
+async def get_admin_db() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Admin DB session — bypasses tenant scope filter entirely.
+    Use ONLY in superadmin endpoints or internal jobs.
+    """
+    async with AsyncSessionLocal() as session:
+        session.info["admin_bypass"] = True
         try:
             yield session
             await session.commit()

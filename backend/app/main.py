@@ -6,6 +6,7 @@ from app.config import settings
 from app.routers import auth as auth_router
 from app.routers import oauth as oauth_router
 from app.routers import user as user_router
+from app.routers import org as org_router
 
 app = FastAPI(
     title="LaunchKit API",
@@ -25,6 +26,7 @@ app.add_middleware(
 app.include_router(auth_router.router)
 app.include_router(oauth_router.router)
 app.include_router(user_router.router)
+app.include_router(org_router.router)
 
 
 @app.get("/health")
