@@ -7,6 +7,7 @@ from app.routers import auth as auth_router
 from app.routers import oauth as oauth_router
 from app.routers import user as user_router
 from app.routers import org as org_router
+from app.routers import billing as billing_router
 
 app = FastAPI(
     title="LaunchKit API",
@@ -27,6 +28,7 @@ app.include_router(auth_router.router)
 app.include_router(oauth_router.router)
 app.include_router(user_router.router)
 app.include_router(org_router.router)
+app.include_router(billing_router.router)
 
 
 @app.get("/health")
