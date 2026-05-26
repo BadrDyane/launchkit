@@ -20,13 +20,17 @@ from app.models.plan import Plan
 from app.models.role import Role
 from app.models.token import RefreshToken
 from app.models.user import User
+from app.services.audit_service import (
+    AuditService,
+    EVT_SIGNUP,
+    EVT_LOGIN,
+    EVT_LOGOUT,
+)
 
 
 class AuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
-
-    # ── Signup ────────────────────────────────────────────────────────────────
 
     async def signup(
         self,
@@ -34,18 +38,12 @@ class AuthService:
         password: str,
         display_name: str | None = None,
     ) -> tuple[User, str, str]:
-        """
-        Creates user + default org + owner membership.
-        Returns (user, access_token, refresh_token_raw).
-        """
-        # Check email uniqueness
         existing = await self.db.execute(
             select(User).where(User.email == email.lower())
         )
         if existing.scalar_one_or_none():
             raise ConflictError("An account with this email already exists")
 
-        # Create user
         user = User(
             email=email.lower(),
             hashed_password=hash_password(password),
@@ -53,15 +51,13 @@ class AuthService:
             is_email_verified=False,
         )
         self.db.add(user)
-        await self.db.flush()  # get user.id without committing
+        await self.db.flush()
 
-        # Get free plan
         free_plan = await self.db.execute(
             select(Plan).where(Plan.slug == "free")
         )
         free_plan = free_plan.scalar_one()
 
-        # Create default organization
         org_name = f"{display_name or email.split('@')[0]}'s Workspace"
         org = Organization(
             name=org_name,
@@ -69,15 +65,13 @@ class AuthService:
             subscription_status="free",
         )
         self.db.add(org)
-        await self.db.flush()  # get org.id
+        await self.db.flush()
 
-        # Get owner role
         owner_role = await self.db.execute(
             select(Role).where(Role.name == "owner")
         )
         owner_role = owner_role.scalar_one()
 
-        # Create owner membership
         membership = OrgMembership(
             user_id=user.id,
             org_id=org.id,
@@ -86,7 +80,6 @@ class AuthService:
         )
         self.db.add(membership)
 
-        # Issue tokens
         access_token = create_access_token(
             user_id=user.id,
             email=user.email,
@@ -104,30 +97,32 @@ class AuthService:
             + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
         )
         self.db.add(refresh_token)
+
+        # Audit
+        audit = AuditService(self.db)
+        await audit.log(
+            event_type=EVT_SIGNUP,
+            actor_id=user.id,
+            user_id=user.id,
+            org_id=org.id,
+            metadata={"email": user.email},
+        )
+
         await self.db.commit()
         await self.db.refresh(user)
-
         return user, access_token, raw_refresh
-
-    # ── Login ─────────────────────────────────────────────────────────────────
 
     async def login(
         self,
         email: str,
         password: str,
     ) -> tuple[User, str, str]:
-        """
-        Verifies credentials.
-        Returns (user, access_token, refresh_token_raw).
-        """
         result = await self.db.execute(
             select(User).where(User.email == email.lower())
         )
         user = result.scalar_one_or_none()
 
-        # Constant-time: always verify even if user not found
         if user is None or not user.hashed_password:
-            # Run a dummy verify to prevent timing attacks
             verify_password("dummy", hash_password("dummy"))
             raise AuthError("Invalid email or password")
 
@@ -154,22 +149,23 @@ class AuthService:
             + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
         )
         self.db.add(refresh_token)
+
+        # Audit
+        audit = AuditService(self.db)
+        await audit.log(
+            event_type=EVT_LOGIN,
+            actor_id=user.id,
+            user_id=user.id,
+            metadata={"email": user.email},
+        )
+
         await self.db.commit()
-
         return user, access_token, raw_refresh
-
-    # ── Refresh ───────────────────────────────────────────────────────────────
 
     async def refresh_tokens(
         self,
         raw_refresh_token: str,
     ) -> tuple[User, str, str]:
-        """
-        Family-based theft detection:
-        - If token is valid and not revoked → rotate (revoke old, issue new)
-        - If token is revoked → revoke entire family → 401
-        - If token not found / expired → 401
-        """
         token_hash = hash_token(raw_refresh_token)
 
         result = await self.db.execute(
@@ -182,7 +178,6 @@ class AuthService:
 
         now = datetime.now(timezone.utc)
 
-        # Theft detection: revoked token used again → kill entire family
         if stored.is_revoked:
             await self.db.execute(
                 update(RefreshToken)
@@ -197,11 +192,9 @@ class AuthService:
             await self.db.commit()
             raise AuthError("Refresh token expired")
 
-        # Revoke current token
         stored.is_revoked = True
         await self.db.flush()
 
-        # Load user
         result = await self.db.execute(
             select(User).where(User.id == stored.user_id)
         )
@@ -210,7 +203,6 @@ class AuthService:
         if not user.is_active:
             raise AuthError("Account is disabled")
 
-        # Issue new tokens in same family
         access_token = create_access_token(
             user_id=user.id,
             email=user.email,
@@ -221,19 +213,15 @@ class AuthService:
         new_refresh = RefreshToken(
             user_id=user.id,
             token_hash=new_hash,
-            family_id=stored.family_id,  # same family
+            family_id=stored.family_id,
             is_revoked=False,
             expires_at=now + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS),
         )
         self.db.add(new_refresh)
         await self.db.commit()
-
         return user, access_token, raw_new
 
-    # ── Logout ────────────────────────────────────────────────────────────────
-
     async def logout(self, raw_refresh_token: str) -> None:
-        """Revokes the specific refresh token."""
         token_hash = hash_token(raw_refresh_token)
         result = await self.db.execute(
             select(RefreshToken).where(RefreshToken.token_hash == token_hash)

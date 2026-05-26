@@ -11,15 +11,14 @@ from app.routers import user as user_router
 from app.routers import org as org_router
 from app.routers import billing as billing_router
 from app.routers import usage as usage_router
+from app.routers import admin as admin_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     from app.jobs.scheduler import start_scheduler
     start_scheduler()
     yield
-    # Shutdown
     from app.jobs.scheduler import stop_scheduler
     stop_scheduler()
 
@@ -46,6 +45,7 @@ app.include_router(user_router.router)
 app.include_router(org_router.router)
 app.include_router(billing_router.router)
 app.include_router(usage_router.router)
+app.include_router(admin_router.router)
 
 
 @app.get("/health")
